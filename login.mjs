@@ -66,7 +66,9 @@ export function loginPage({ html, supabaseUrl = SUPABASE_URL, anonKey = SUPABASE
     document.open();
     document.write(html);
     document.close();
-    addSignOut();
+    // A prototype that loads a <script src> in its <head> is still being parsed here, with no <body> yet.
+    if (document.body) addSignOut();
+    else document.addEventListener('DOMContentLoaded', addSignOut, { once: true });
   }
 
   // Floating button over the prototype. A shadow root keeps the prototype's CSS off it and its CSS off the prototype.
