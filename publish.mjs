@@ -6,13 +6,15 @@
 // through v4's cd-vo-preview workflow. Each customer has one branch, proto/<customer>, that keeps every
 // solution's page at apps/vo/frontend/prototypes/<solution>.html. A publish saves on top of that branch:
 // main's latest code, every page already there, the new or updated page, and vo-frontend's build swapped
-// for a plain copy of that page, so it goes up byte for byte and VO's app (and its vite config) never runs.
+// for a plain copy of that page, so VO's app (and its vite config) never runs. The page goes up wrapped in the
+// Supabase sign-in page from login.mjs; past the sign-in, the PM's file renders byte for byte.
 // Branches are never force-replaced, and a proto/ branch pm-publish didn't make is never touched. Nothing
 // local is touched either: all git work happens through the GitHub API with the token `gh` already holds.
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { loginPage } from './login.mjs';
 
 const REPO = 'unframeai/v4';
 const WORKFLOW = 'cd-vo-preview.yml';
@@ -117,7 +119,12 @@ export function checkFile(file) {
       `   Publish a single-file version instead. For a /proto prototype that's the packed prototypes/<customer>/<customer>.html.`,
     ].filter(Boolean).join('\n'));
   }
-  return { name, bytes, sha256: sha256(bytes) };
+  // What goes up is the sign-in page carrying the file, never the bare file.
+  const page = Buffer.from(loginPage({ html }), 'utf8');
+  if (page.length > MAX_BYTES) {
+    throw new PublishError(`${name} is ${mb(bytes.length)}; with the sign-in page around it that's ${mb(page.length)}, over the ${mb(MAX_BYTES)} limit.`);
+  }
+  return { name, bytes, page, sha256: sha256(page) };
 }
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -191,8 +198,8 @@ const pagesOn = (state, solution) => (state?.kept ?? []).map((f) => f.name.repla
 
 export async function publish({ customer, solution, file, dryRun = false, log = console.log }) {
   checkNames(customer, solution);
-  const { name, bytes } = checkFile(file);
-  log(`✓ Checked ${name} (${mb(bytes.length)}, self-contained)`);
+  const { name, bytes, page } = checkFile(file);
+  log(`✓ Checked ${name} (${mb(bytes.length)}, self-contained) and put it behind the sign-in page`);
 
   const repo = await gh('GET', `repos/${REPO}`).catch((e) => {
     if (e.status === 404) throw new PublishError(`Your GitHub account can't see ${REPO}. Ask Yael to add you to the unframeai org.`);
@@ -223,7 +230,7 @@ export async function publish({ customer, solution, file, dryRun = false, log = 
     return { link, branch, mainSha, dryRun: true };
   }
 
-  const blob = await gh('POST', `repos/${REPO}/git/blobs`, { content: bytes.toString('base64'), encoding: 'base64' });
+  const blob = await gh('POST', `repos/${REPO}/git/blobs`, { content: page.toString('base64'), encoding: 'base64' });
   let commit;
   for (let attempt = 1; ; attempt++) {
     const tree = await gh('POST', `repos/${REPO}/git/trees`, {
@@ -303,7 +310,7 @@ export async function verify({
       const res = await fetch(`${link}/`, { headers: { 'Cache-Control': 'no-cache' } });
       const body = Buffer.from(await res.arrayBuffer());
       if (res.ok && sha256(body) === want) {
-        log(`✓ Checked the link: it shows exactly ${name}.`);
+        log(`✓ Checked the link: it shows exactly ${name}, behind the sign-in page.`);
         return { link, ok: true };
       }
       last = res.ok ? 'it shows a different page' : `it answered ${res.status}`;

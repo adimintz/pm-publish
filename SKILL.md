@@ -1,11 +1,13 @@
 ---
 name: pm-publish
-description: "Turns a prototype into a link. Give it one HTML file, built with /proto or anywhere else, plus a customer and a solution name, and you get a link like https://unf-vo-proto-agco-rfq.b-cdn.net. Use when the user says \"publish this\", \"publish my prototype\", \"get me a link for this prototype\", \"I need a link to present\", \"deploy preview\", names a customer and a solution after \"publish\" (for example \"publish agco rfq\"), or types /pm-publish. Claude Code only; publishes HTML files, not Vue mocks.\n"
+description: "Turns a prototype into a link behind a sign-in. Give it one HTML file, built with /proto or anywhere else, plus a customer and a solution name, and you get a link like https://unf-vo-proto-agco-rfq.b-cdn.net. Use when the user says \"publish this\", \"publish my prototype\", \"get me a link for this prototype\", \"I need a link to present\", \"deploy preview\", names a customer and a solution after \"publish\" (for example \"publish agco rfq\"), or types /pm-publish. Claude Code only; publishes HTML files, not Vue mocks.\n"
 ---
 
 # /pm-publish: publish a prototype as a link
 
 You publish one HTML file as a link. The PM presents it by sharing their screen on a call; customers never open it themselves.
+
+Every link opens on a sign-in page. Whoever opens it signs in with an email and password from VO's Supabase project, and then sees the prototype exactly as the file shows it, with a small Sign out button in the bottom-right corner.
 
 `$SKILL_DIR` is the absolute path of the folder that contains this `SKILL.md`. Substitute it in every command below.
 
@@ -45,7 +47,7 @@ bun "$SKILL_DIR/publish.mjs" verify <customer> <solution> "<full path to the fil
 
 If the build link is the workflow page rather than a single run, leave out `--run <run id>`.
 
-- ✓ → tell the PM the link is ready to present.
+- ✓ → tell the PM the link is ready to present, and that it opens on a sign-in page where they sign in with their VO account.
 - ⏳ → the build is slow, not broken. Tell the PM "GitHub is slow right now, still checking," and run the same command again, up to two more times. If it still says ⏳, give the PM the build link and say the link will show the new version once the build finishes.
 - ❌ → show the line and use the table below.
 
@@ -55,6 +57,7 @@ If the build link is the workflow page rather than a single run, leave out `--ru
 |---|---|
 | The customer (or solution) name must be... | Pick a name that fits, for example `health-intel` or `claims-portal` |
 | Can't find the file / isn't an HTML file / doesn't look like a web page | Ask for the right file |
+| ...is N MB; the limit is... / ...with the sign-in page around it... over the limit | The file is too big to publish. Ask for a smaller version, for example with lighter images or fewer embedded files. |
 | ...points to files it doesn't carry inside it | The page needs files that sit next to it on the laptop. For `/proto`, publish the packed file. From another tool, export a single-file version, or offer to put those files inside the page. Only edit the file if the PM says yes. |
 | ...loads things from apps running on your laptop | The page uses v4 (or another app) running on the laptop, and the link would break whenever it isn't running. Rebuild it as one page with `/proto`, or export a single-file version from the tool that made it. |
 | ...already holds someone else's work | That branch is a colleague's own work. Ask the PM for another customer name; the message suggests one. Don't work around it. |
@@ -72,6 +75,8 @@ If the build link is the workflow page rather than a single run, leave out `--ru
 - **Don't edit the PM's file** to get past a check unless they ask.
 - **Don't create a new workflow file.** `cd-vo-preview` already covers every customer and solution.
 - **Present, don't send.** Describe the link as something to present on a call, never as something to send to a customer.
+- **Always behind the sign-in.** Every publish goes up inside the sign-in page. Don't offer a way to publish without it.
+- **No accounts from here.** If the PM needs a sign-in, they ask Adi Azarya, who runs VO's Supabase project. Don't create users or sign anyone up.
 
 ## How it works
 
@@ -82,7 +87,10 @@ If the build link is the workflow page rather than a single run, leave out `--ru
 - It never force-replaces a branch, so earlier pages and commits stay on it. A `proto/` branch it didn't make (a colleague's own work) is never touched.
 - Everything goes through the GitHub API with the PM's `gh` login; nothing on the laptop changes.
 - Each link keeps what it got when it was published, so `agco rfq` and `agco portal` don't affect each other.
+- **The sign-in page** comes from `login.mjs`. It carries the PM's file inside it and shows it only after Supabase accepts the email and password. The session stays in the browser, so a refresh doesn't ask again, and Sign out ends it. Each link is its own site, so signing in to one doesn't sign in to another. `verify` checks the link against the wrapped page.
 - **Known limit:** two publishes for the same customer within about a minute could give one link the other's page. Publishing again fixes it.
+- **Known limit:** the sign-in keeps visitors out, but the prototype is still readable in the page source. Don't publish anything that must stay secret yet.
+- **Known limit:** anyone with an account in VO's Supabase project can sign in to every link, and that project lets people sign up on their own.
 - Tests: `bun test "$SKILL_DIR"`.
 
 $ARGUMENTS

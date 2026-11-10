@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkNames, checkFile, localRefs, linkFor, branchFor, copyBuild, madeByPublish, otherName, treeEntries, verify, PublishError, StillBuilding } from './publish.mjs';
+import { loginPage, SUPABASE_URL } from './login.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'pm-publish-'));
 const file = (name, body) => {
@@ -78,6 +79,20 @@ test('laptop addresses: v4 or an API running locally counts, in tags and in code
     <a href="http://localhost:3000">nav</a><img src="https://cdn.example/localhost.png"></body></html>`;
   expect(localRefs(html).sort()).toEqual(['//127.0.0.1:8080/app.css', 'http://localhost:5173/mocks/rfq',
     'http://localhost:5173/src/main.ts', 'http://localhost:8000/api/loans', 'ws://[::1]:24678']);
+});
+
+test('what goes up is the sign-in page carrying the exact file', () => {
+  const html = '<!doctype html><html><head><title>Proto</title></head><body><p>Secret plan</p><script>x("</script>")</script></body></html>';
+  const { page } = checkFile(file('proto.html', html));
+  const text = page.toString('utf8');
+  expect(text).toContain('<title>Sign in</title>');
+  expect(text).toContain(SUPABASE_URL);
+  expect(text).not.toContain('Secret plan');
+  expect(text).toBe(loginPage({ html }));
+  const payload = text.match(/<script id="prototype" type="application\/octet-stream">([^<]+)<\/script>/)[1];
+  expect(Buffer.from(payload, 'base64').toString('utf8')).toBe(html);
+  // The sign-in page itself passes the same checks the PM's file does.
+  expect(localRefs(text)).toEqual([]);
 });
 
 test('file checks', () => {
