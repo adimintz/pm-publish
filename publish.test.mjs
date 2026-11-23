@@ -3,7 +3,7 @@ import { test, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkNames, checkFile, checkUsers, savedUsers, localRefs, linkFor, branchFor, copyBuild, madeByPublish, otherName, treeEntries, verify, PublishError, StillBuilding } from './publish.mjs';
+import { checkNames, checkFile, checkUsers, newUser, savedUsers, localRefs, linkFor, branchFor, copyBuild, madeByPublish, otherName, treeEntries, verify, PublishError, StillBuilding } from './publish.mjs';
 import { lockedPage, readLocked, unlock } from './login.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'pm-publish-'));
@@ -109,6 +109,17 @@ test('users: at least one, unique names, passwords of 12+ characters', () => {
   expect(() => checkUsers([{ username: '', password: 'twelve-chars' }])).toThrow(/username/);
   expect(() => checkUsers([{ username: 'pm', password: 'short' }])).toThrow(/at least 12 characters/);
   expect(() => checkUsers([{ username: 'pm', password: 'twelve-chars' }, { username: 'PM', password: 'other-twelve' }])).toThrow(/twice/);
+});
+
+test('a random user is an @unframe.ai viewer with a strong password, different every time', () => {
+  const users = Array.from({ length: 50 }, newUser);
+  for (const user of users) {
+    expect(user.username).toMatch(/^viewer-[a-z2-9]{6}@unframe\.ai$/);
+    expect(user.password).toMatch(/^[a-z2-9]{5}(-[a-z2-9]{5}){3}$/);
+    expect(user.password).not.toMatch(/[01ilo]/);
+  }
+  expect(() => checkUsers(users)).not.toThrow();
+  expect(new Set(users.map((u) => u.password)).size).toBe(50);
 });
 
 test('saved users are read per customer and solution', () => {

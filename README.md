@@ -33,14 +33,15 @@ In Claude Code:
 /pm-publish <customer> <solution>
 ```
 
-Then give it the HTML file. Claude follows [SKILL.md](SKILL.md): it asks you to create the users who can open the link (one at a time, "add another or publish?"), publishes, waits for the build and signs in to the link to check it.
+Then give it the HTML file. Claude follows [SKILL.md](SKILL.md): it asks you to create the users who can open the link, publishes, waits for the build and signs in to the link to check it. For each user you pick **Generate a random user** (a random `@unframe.ai` username and a strong password, shown once so you can save them) or **Choose my own**. From the second user on there's also **Finish and publish**.
 
 The script also runs on its own. New users go on stdin as JSON, so passwords stay off the command line:
 
 ```bash
 bun publish.mjs publish <customer> <solution> <file.html> --users-stdin <<'USERS'
-[{"username": "admin@unframe.ai", "password": "at-least-12-characters"}]
+[{"username": "viewer-k3m9xq@unframe.ai", "password": "at-least-12-characters"}]
 USERS
+bun publish.mjs new-user                                       # print a random user as JSON
 bun publish.mjs publish <customer> <solution> <file.html>   # republish for the users saved last time
 bun publish.mjs verify  <customer> <solution> <file.html> [--run <run id>]
 bun publish.mjs users   <customer> <solution>                # list the saved usernames

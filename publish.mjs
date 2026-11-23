@@ -2,6 +2,7 @@
 //   bun publish.mjs publish <customer> <solution> <file.html> [--users-stdin] [--dry-run]
 //   bun publish.mjs verify  <customer> <solution> <file.html> [--run <run id>]
 //   bun publish.mjs users   <customer> <solution>
+//   bun publish.mjs new-user        (prints a random user as JSON)
 //
 // Publishes one self-contained HTML file to https://unf-vo-proto-<customer>-<solution>.b-cdn.net
 // through v4's cd-vo-preview workflow. Each customer has one branch, proto/<customer>, that keeps every
@@ -137,6 +138,15 @@ function saveUsers(customer, solution, users) {
   writeFileSync(file, `${JSON.stringify({ ...readCredentials(), [`${customer}/${solution}`]: users }, null, 2)}\n`, { mode: 0o600 });
   chmodSync(file, 0o600);
 }
+
+// A random user for a link: a made-up @unframe.ai name and a 4×5-character password (about 100 bits).
+// The alphabet leaves out look-alikes (0/o, 1/l/i) so a password read off a screen types back correctly.
+const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+const randomText = (n) => Array.from(globalThis.crypto.getRandomValues(new Uint32Array(n)), (v) => ALPHABET[v % ALPHABET.length]).join('');
+export const newUser = () => ({
+  username: `viewer-${randomText(6)}@unframe.ai`,
+  password: [0, 1, 2, 3].map(() => randomText(5)).join('-'),
+});
 
 export function checkUsers(users) {
   if (!Array.isArray(users) || !users.length) throw new PublishError('Add at least one user who can open the link.');
@@ -379,6 +389,7 @@ if (import.meta.main) {
     const args = parseArgs(process.argv.slice(2));
     if (args.command === 'publish') await publish(args);
     else if (args.command === 'verify') await verify(args);
+    else if (args.command === 'new-user') console.log(JSON.stringify(newUser()));
     else if (args.command === 'users') {
       checkNames(args.customer, args.solution);
       const names = savedUsers(args.customer, args.solution).map((u) => u.username);
@@ -386,7 +397,8 @@ if (import.meta.main) {
     } else {
       console.error('Usage: bun publish.mjs publish <customer> <solution> <file.html> [--users-stdin] [--dry-run]\n' +
         '       bun publish.mjs verify  <customer> <solution> <file.html> [--run <id>]\n' +
-        '       bun publish.mjs users   <customer> <solution>');
+        '       bun publish.mjs users   <customer> <solution>\n' +
+        '       bun publish.mjs new-user');
       process.exit(2);
     }
   } catch (e) {
