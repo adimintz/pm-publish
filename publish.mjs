@@ -1,20 +1,23 @@
 // Usage:
-//   bun publish.mjs publish <customer> <solution> <file.html> [--dry-run]
+//   bun publish.mjs publish <customer> <solution> <file.html> [--users-stdin] [--dry-run]
 //   bun publish.mjs verify  <customer> <solution> <file.html> [--run <run id>]
+//   bun publish.mjs users   <customer> <solution>
 //
 // Publishes one self-contained HTML file to https://unf-vo-proto-<customer>-<solution>.b-cdn.net
 // through v4's cd-vo-preview workflow. Each customer has one branch, proto/<customer>, that keeps every
 // solution's page at apps/vo/frontend/prototypes/<solution>.html. A publish saves on top of that branch:
 // main's latest code, every page already there, the new or updated page, and vo-frontend's build swapped
-// for a plain copy of that page, so VO's app (and its vite config) never runs. The page goes up wrapped in the
-// Supabase sign-in page from login.mjs; past the sign-in, the PM's file renders byte for byte.
-// Branches are never force-replaced, and a proto/ branch pm-publish didn't make is never touched. Nothing
-// local is touched either: all git work happens through the GitHub API with the token `gh` already holds.
-import { readFileSync, existsSync, statSync } from 'node:fs';
-import { basename, extname } from 'node:path';
+// for a plain copy of that page, so VO's app (and its vite config) never runs. The page goes up encrypted inside
+// the locked page from login.mjs, opened only by the users the PM created; past the sign-in, the PM's file
+// renders byte for byte. Those users are saved on this laptop so a republish can keep them and verify can open the link.
+// Branches are never force-replaced, and a proto/ branch pm-publish didn't make is never touched. Nothing in
+// v4 is touched locally: all git work happens through the GitHub API with the token `gh` already holds.
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, statSync } from 'node:fs';
+import { basename, dirname, extname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { loginPage } from './login.mjs';
+import { lockedPage, unlock } from './login.mjs';
 
 const REPO = 'unframeai/v4';
 const WORKFLOW = 'cd-vo-preview.yml';
@@ -119,12 +122,35 @@ export function checkFile(file) {
       `   Publish a single-file version instead. For a /proto prototype that's the packed prototypes/<customer>/<customer>.html.`,
     ].filter(Boolean).join('\n'));
   }
-  // What goes up is the sign-in page carrying the file, never the bare file.
-  const page = Buffer.from(loginPage({ html }), 'utf8');
-  if (page.length > MAX_BYTES) {
-    throw new PublishError(`${name} is ${mb(bytes.length)}; with the sign-in page around it that's ${mb(page.length)}, over the ${mb(MAX_BYTES)} limit.`);
+  return { name, bytes, html, sha256: sha256(bytes) };
+}
+
+// Who can open a link: users the PM created, kept on this laptop per customer/solution (readable only by them).
+const MIN_PASSWORD = 12;
+const credentialsFile = () => process.env.PM_PUBLISH_CREDENTIALS ?? join(homedir(), '.pm-publish', 'credentials.json');
+const readCredentials = () => (existsSync(credentialsFile()) ? JSON.parse(readFileSync(credentialsFile(), 'utf8')) : {});
+export const savedUsers = (customer, solution) => readCredentials()[`${customer}/${solution}`] ?? [];
+
+function saveUsers(customer, solution, users) {
+  const file = credentialsFile();
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, `${JSON.stringify({ ...readCredentials(), [`${customer}/${solution}`]: users }, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(file, 0o600);
+}
+
+export function checkUsers(users) {
+  if (!Array.isArray(users) || !users.length) throw new PublishError('Add at least one user who can open the link.');
+  const seen = new Set();
+  for (const user of users) {
+    const username = typeof user?.username === 'string' ? user.username.trim().toLowerCase() : '';
+    if (!username || username.length > 64) throw new PublishError('Every user needs a username of 1-64 characters.');
+    if (seen.has(username)) throw new PublishError(`The username ${username} is in the list twice.`);
+    seen.add(username);
+    if (typeof user.password !== 'string' || user.password.length < MIN_PASSWORD) {
+      throw new PublishError(`The password for ${username} must be at least ${MIN_PASSWORD} characters: anyone with the link can try passwords offline.`);
+    }
   }
-  return { name, bytes, page, sha256: sha256(page) };
+  return users.map(({ username, password }) => ({ username: username.trim().toLowerCase(), password }));
 }
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -196,10 +222,17 @@ async function someoneElses(branch, customer, head) {
 
 const pagesOn = (state, solution) => (state?.kept ?? []).map((f) => f.name.replace(/\.html$/, '')).filter((s) => s !== solution);
 
-export async function publish({ customer, solution, file, dryRun = false, log = console.log }) {
+export async function publish({ customer, solution, file, users: given, dryRun = false, log = console.log }) {
   checkNames(customer, solution);
-  const { name, bytes, page } = checkFile(file);
-  log(`✓ Checked ${name} (${mb(bytes.length)}, self-contained) and put it behind the sign-in page`);
+  const { name, bytes, html } = checkFile(file);
+  const saved = savedUsers(customer, solution);
+  if (!given && !saved.length) throw new PublishError(`No users can open ${customer} ${solution} yet. Create at least one user, then publish.`);
+  const users = checkUsers(given ?? saved);
+  const page = Buffer.from(await lockedPage({ html, users }), 'utf8');
+  if (page.length > MAX_BYTES) {
+    throw new PublishError(`${name} is ${mb(bytes.length)}; locked, that's ${mb(page.length)}, over the ${mb(MAX_BYTES)} limit.`);
+  }
+  log(`✓ Checked ${name} (${mb(bytes.length)}, self-contained) and locked it for ${users.map((u) => u.username).join(', ')}`);
 
   const repo = await gh('GET', `repos/${REPO}`).catch((e) => {
     if (e.status === 404) throw new PublishError(`Your GitHub account can't see ${REPO}. Ask Yael to add you to the unframeai org.`);
@@ -254,6 +287,7 @@ export async function publish({ customer, solution, file, dryRun = false, log = 
       if (state && !state.ours) throw await someoneElses(branch, customer, state.head);
     }
   }
+  saveUsers(customer, solution, users);
   const others = pagesOn(state, solution);
   log(`✓ Saved ${solution} to ${branch}${others.length ? `, next to ${others.join(', ')}` : ''} (commit ${commit.sha.slice(0, 10)})`);
 
@@ -285,6 +319,8 @@ export async function verify({
   checkNames(customer, solution);
   const { name, sha256: want } = checkFile(file);
   const link = linkFor(customer, solution);
+  const [user] = savedUsers(customer, solution);
+  if (!user) throw new PublishError(`This laptop has no saved user for ${customer} ${solution}, so it can't open the link to check it. Publish from this laptop first.`);
 
   if (runId) {
     const started = Date.now();
@@ -308,12 +344,13 @@ export async function verify({
   for (;;) {
     try {
       const res = await fetch(`${link}/`, { headers: { 'Cache-Control': 'no-cache' } });
-      const body = Buffer.from(await res.arrayBuffer());
-      if (res.ok && sha256(body) === want) {
-        log(`✓ Checked the link: it shows exactly ${name}, behind the sign-in page.`);
+      // Open the live page the way a browser would, as the first saved user: it must unlock to exactly the file.
+      const opened = res.ok ? await unlock({ page: await res.text(), username: user.username, password: user.password }) : null;
+      if (opened !== null && sha256(Buffer.from(opened, 'utf8')) === want) {
+        log(`✓ Checked the link: signed in as ${user.username}, it shows exactly ${name}.`);
         return { link, ok: true };
       }
-      last = res.ok ? 'it shows a different page' : `it answered ${res.status}`;
+      last = res.ok ? 'it shows a different or older page' : `it answered ${res.status}`;
     } catch {
       last = "it doesn't answer yet";
     }
@@ -322,19 +359,34 @@ export async function verify({
   }
 }
 
+// --users-stdin reads [{"username": "...", "password": "..."}] from stdin, so passwords stay off the command line.
 function parseArgs(argv) {
   const [command, customer, solution, file, ...rest] = argv;
   const runAt = rest.indexOf('--run');
-  return { command, customer, solution, file, dryRun: rest.includes('--dry-run'), runId: runAt >= 0 ? rest[runAt + 1] : null };
+  let users;
+  if (rest.includes('--users-stdin')) {
+    try {
+      users = JSON.parse(readFileSync(0, 'utf8'));
+    } catch {
+      throw new PublishError('The users on stdin must be JSON: [{"username": "...", "password": "..."}].');
+    }
+  }
+  return { command, customer, solution, file, users, dryRun: rest.includes('--dry-run'), runId: runAt >= 0 ? rest[runAt + 1] : null };
 }
 
 if (import.meta.main) {
-  const args = parseArgs(process.argv.slice(2));
   try {
+    const args = parseArgs(process.argv.slice(2));
     if (args.command === 'publish') await publish(args);
     else if (args.command === 'verify') await verify(args);
-    else {
-      console.error('Usage: bun publish.mjs publish|verify <customer> <solution> <file.html> [--dry-run] [--run <id>]');
+    else if (args.command === 'users') {
+      checkNames(args.customer, args.solution);
+      const names = savedUsers(args.customer, args.solution).map((u) => u.username);
+      console.log(names.length ? `Saved users for ${args.customer} ${args.solution}: ${names.join(', ')}` : `No saved users for ${args.customer} ${args.solution}.`);
+    } else {
+      console.error('Usage: bun publish.mjs publish <customer> <solution> <file.html> [--users-stdin] [--dry-run]\n' +
+        '       bun publish.mjs verify  <customer> <solution> <file.html> [--run <id>]\n' +
+        '       bun publish.mjs users   <customer> <solution>');
       process.exit(2);
     }
   } catch (e) {

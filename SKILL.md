@@ -1,13 +1,13 @@
 ---
 name: pm-publish
-description: "Turns a prototype into a link behind a sign-in. Give it one HTML file, built with /proto or anywhere else, plus a customer and a solution name, and you get a link like https://unf-vo-proto-agco-rfq.b-cdn.net. Use when the user says \"publish this\", \"publish my prototype\", \"get me a link for this prototype\", \"I need a link to present\", \"deploy preview\", names a customer and a solution after \"publish\" (for example \"publish agco rfq\"), or types /pm-publish. Claude Code only; publishes HTML files, not Vue mocks.\n"
+description: "Turns a prototype into an encrypted link that only the users you create can open. Give it one HTML file, built with /proto or anywhere else, plus a customer and a solution name, and you get a link like https://unf-vo-proto-agco-rfq.b-cdn.net. Use when the user says \"publish this\", \"publish my prototype\", \"get me a link for this prototype\", \"I need a link to present\", \"deploy preview\", names a customer and a solution after \"publish\" (for example \"publish agco rfq\"), or types /pm-publish. Claude Code only; publishes HTML files, not Vue mocks.\n"
 ---
 
 # /pm-publish: publish a prototype as a link
 
 You publish one HTML file as a link. The PM presents it by sharing their screen on a call; customers never open it themselves.
 
-Every link opens on a sign-in page. Whoever opens it signs in with an email and password from VO's Supabase project, and then sees the prototype exactly as the file shows it, with a small Sign out button in the bottom-right corner.
+Every link opens on a sign-in page. The prototype is encrypted inside it, and only the users the PM creates while publishing can open it. After signing in they see the prototype exactly as the file shows it, with a small Sign out button in the bottom-right corner. Someone who downloads the page without a username and password gets only scrambled data.
 
 `$SKILL_DIR` is the absolute path of the folder that contains this `SKILL.md`. Substitute it in every command below.
 
@@ -27,15 +27,37 @@ The arguments are the customer, then the solution, for example `/pm-publish agco
 
 The file must be one self-contained page. A `/proto` prototype is already packed into one: `prototypes/<customer>/<customer>.html` in the design-system folder.
 
-## 3. Publish
+## 3. Create the users who can open the link
+
+First check whether this laptop already has users for this link:
 
 ```bash
-bun "$SKILL_DIR/publish.mjs" publish <customer> <solution> "<full path to the file>"
+bun "$SKILL_DIR/publish.mjs" users <customer> <solution>
 ```
 
-Show the PM the output as it is. On the happy path that's three ✓ lines, the link and the build link. If it prints ❌, show that line, use the table below and stop.
+- If it lists users, ask: "This link already opens for <names>. Keep them, or set new users?" To keep them, skip to step 4 and publish without `--users-stdin`.
+- Otherwise, or if the PM wants new users, create them one at a time:
+  1. Ask for the username, for example an email such as `admin@unframe.ai`. Usernames ignore case.
+  2. Ask for the password: at least 12 characters, because anyone with the link can try passwords offline. Offer to make up a strong one if the PM prefers.
+  3. Then ask: "Add another user, or publish?" Repeat until the PM says publish.
 
-## 4. Check the link
+Never repeat a password back in chat; refer to users by username only. Remind the PM to keep the passwords somewhere safe, such as a password manager: pm-publish doesn't show them again.
+
+## 4. Publish
+
+With new users, pass them on stdin so the passwords stay off the command line. Write the list as JSON inside a quoted heredoc:
+
+```bash
+bun "$SKILL_DIR/publish.mjs" publish <customer> <solution> "<full path to the file>" --users-stdin <<'USERS'
+[{"username": "admin@unframe.ai", "password": "..."}, {"username": "gal@unframe.ai", "password": "..."}]
+USERS
+```
+
+To keep the saved users, leave out `--users-stdin` and the heredoc.
+
+Show the PM the output as it is. On the happy path that's three ✓ lines (the first names the users it's locked for), the link and the build link. If it prints ❌, show that line, use the table below and stop.
+
+## 5. Check the link
 
 Say: "The link is usually ready in about 2 minutes. I'm checking that it shows your file."
 
@@ -47,7 +69,7 @@ bun "$SKILL_DIR/publish.mjs" verify <customer> <solution> "<full path to the fil
 
 If the build link is the workflow page rather than a single run, leave out `--run <run id>`.
 
-- ✓ → tell the PM the link is ready to present, and that it opens on a sign-in page where they sign in with their VO account.
+- ✓ → tell the PM the link is ready to present, and that it opens on a sign-in page where they sign in with one of the users they created. The check signs in as the first user, so it also proves the password works.
 - ⏳ → the build is slow, not broken. Tell the PM "GitHub is slow right now, still checking," and run the same command again, up to two more times. If it still says ⏳, give the PM the build link and say the link will show the new version once the build finishes.
 - ❌ → show the line and use the table below.
 
@@ -57,7 +79,12 @@ If the build link is the workflow page rather than a single run, leave out `--ru
 |---|---|
 | The customer (or solution) name must be... | Pick a name that fits, for example `health-intel` or `claims-portal` |
 | Can't find the file / isn't an HTML file / doesn't look like a web page | Ask for the right file |
-| ...is N MB; the limit is... / ...with the sign-in page around it... over the limit | The file is too big to publish. Ask for a smaller version, for example with lighter images or fewer embedded files. |
+| ...is N MB; the limit is... / ...locked, that's... over the limit | The file is too big to publish. Ask for a smaller version, for example with lighter images or fewer embedded files. |
+| No users can open ... yet / Add at least one user | Go back to step 3 and create at least one user |
+| The password for ... must be at least 12 characters | Ask that user for a longer password, then publish again with the full list |
+| The username ... is in the list twice / Every user needs a username | Fix the list (usernames ignore case) and publish again |
+| The users on stdin must be JSON | Your heredoc wasn't valid JSON. Fix the escaping (for example a `"` or `\` inside a password) and run it again. |
+| This laptop has no saved user for ... | The link was published from another laptop, so this one can't sign in to check it. Publish from this laptop, with the users the PM wants. |
 | ...points to files it doesn't carry inside it | The page needs files that sit next to it on the laptop. For `/proto`, publish the packed file. From another tool, export a single-file version, or offer to put those files inside the page. Only edit the file if the PM says yes. |
 | ...loads things from apps running on your laptop | The page uses v4 (or another app) running on the laptop, and the link would break whenever it isn't running. Rebuild it as one page with `/proto`, or export a single-file version from the tool that made it. |
 | ...already holds someone else's work | That branch is a colleague's own work. Ask the PM for another customer name; the message suggests one. Don't work around it. |
@@ -75,8 +102,8 @@ If the build link is the workflow page rather than a single run, leave out `--ru
 - **Don't edit the PM's file** to get past a check unless they ask.
 - **Don't create a new workflow file.** `cd-vo-preview` already covers every customer and solution.
 - **Present, don't send.** Describe the link as something to present on a call, never as something to send to a customer.
-- **Always behind the sign-in.** Every publish goes up inside the sign-in page. Don't offer a way to publish without it.
-- **No accounts from here.** If the PM needs a sign-in, they ask Adi Azarya, who runs VO's Supabase project. Don't create users or sign anyone up.
+- **Always locked.** Every publish goes up encrypted, for at least one user. Don't offer a way to publish without it.
+- **Passwords stay private.** Never echo a password in chat, in a command's arguments or in a file you write. They go only through the `--users-stdin` heredoc.
 
 ## How it works
 
@@ -87,10 +114,11 @@ If the build link is the workflow page rather than a single run, leave out `--ru
 - It never force-replaces a branch, so earlier pages and commits stay on it. A `proto/` branch it didn't make (a colleague's own work) is never touched.
 - Everything goes through the GitHub API with the PM's `gh` login; nothing on the laptop changes.
 - Each link keeps what it got when it was published, so `agco rfq` and `agco portal` don't affect each other.
-- **The sign-in page** comes from `login.mjs`. It carries the PM's file inside it and shows it only after Supabase accepts the email and password. The session stays in the browser, so a refresh doesn't ask again, and Sign out ends it. Each link is its own site, so signing in to one doesn't sign in to another. `verify` checks the link against the wrapped page.
+- **The locked page** comes from `login.mjs`. The PM's file is encrypted with a random key (AES-GCM); each user's username and password, stretched with PBKDF2, locks a copy of that key. The page holds no usernames or passwords. The browser opens it with WebCrypto, keeps the key in `localStorage` so a refresh doesn't ask again, and Sign out forgets it. Each link is its own site, so signing in to one doesn't sign in to another.
+- **Users are saved on this laptop** in `~/.pm-publish/credentials.json` (readable only by the PM), per customer and solution, so a republish can keep them and `verify` can sign in to check the link.
 - **Known limit:** two publishes for the same customer within about a minute could give one link the other's page. Publishing again fixes it.
-- **Known limit:** the sign-in keeps visitors out, but the prototype is still readable in the page source. Don't publish anything that must stay secret yet.
-- **Known limit:** anyone with an account in VO's Supabase project can sign in to every link, and that project lets people sign up on their own.
+- **Known limit:** changing who can open a link means publishing it again. Someone who saved the old page keeps access to that old version with the old password.
+- **Known limit:** the encryption is only as strong as the passwords. Anyone with the link can try passwords offline, which is why they must be at least 12 characters.
 - Tests: `bun test "$SKILL_DIR"`.
 
 $ARGUMENTS

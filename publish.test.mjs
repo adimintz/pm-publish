@@ -3,10 +3,13 @@ import { test, expect } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkNames, checkFile, localRefs, linkFor, branchFor, copyBuild, madeByPublish, otherName, treeEntries, verify, PublishError, StillBuilding } from './publish.mjs';
-import { loginPage, SUPABASE_URL } from './login.mjs';
+import { checkNames, checkFile, checkUsers, savedUsers, localRefs, linkFor, branchFor, copyBuild, madeByPublish, otherName, treeEntries, verify, PublishError, StillBuilding } from './publish.mjs';
+import { lockedPage, readLocked, unlock } from './login.mjs';
 
 const dir = mkdtempSync(join(tmpdir(), 'pm-publish-'));
+// Saved users go to a scratch file, never the real ~/.pm-publish.
+process.env.PM_PUBLISH_CREDENTIALS = join(dir, 'credentials.json');
+writeFileSync(process.env.PM_PUBLISH_CREDENTIALS, JSON.stringify({ 'agco/rfq': [{ username: 'pm', password: 'correct horse battery' }] }));
 const file = (name, body) => {
   const p = join(dir, name);
   writeFileSync(p, body);
@@ -81,18 +84,41 @@ test('laptop addresses: v4 or an API running locally counts, in tags and in code
     'http://localhost:5173/src/main.ts', 'http://localhost:8000/api/loans', 'ws://[::1]:24678']);
 });
 
-test('what goes up is the sign-in page carrying the exact file', () => {
-  const html = '<!doctype html><html><head><title>Proto</title></head><body><p>Secret plan</p><script>x("</script>")</script></body></html>';
-  const { page } = checkFile(file('proto.html', html));
-  const text = page.toString('utf8');
-  expect(text).toContain('<title>Sign in</title>');
-  expect(text).toContain(SUPABASE_URL);
-  expect(text).not.toContain('Secret plan');
-  expect(text).toBe(loginPage({ html }));
-  const payload = text.match(/<script id="prototype" type="application\/octet-stream">([^<]+)<\/script>/)[1];
-  expect(Buffer.from(payload, 'base64').toString('utf8')).toBe(html);
-  // The sign-in page itself passes the same checks the PM's file does.
-  expect(localRefs(text)).toEqual([]);
+test('the locked page opens to the exact file for each user, and only for them', async () => {
+  const html = '<!doctype html><html><head><title>Proto</title></head><body><p>Secret plan ✓</p><script>x("</script>")</script></body></html>';
+  const users = [{ username: 'admin@unframe.ai', password: 'first-password-1' }, { username: 'gal', password: 'second-password-2' }];
+  const page = await lockedPage({ html, users });
+  expect(page).toContain('<title>Sign in</title>');
+  for (const secret of ['Secret plan', 'Proto', 'admin@unframe.ai', 'gal', 'first-password-1', 'second-password-2', Buffer.from(html).toString('base64').slice(0, 24)]) {
+    expect(page).not.toContain(secret);
+  }
+  expect(readLocked(page).locks).toHaveLength(2);
+  expect(await unlock({ page, username: 'admin@unframe.ai', password: 'first-password-1' })).toBe(html);
+  // Usernames match regardless of case and surrounding spaces; passwords match exactly.
+  expect(await unlock({ page, username: ' GAL ', password: 'second-password-2' })).toBe(html);
+  expect(await unlock({ page, username: 'gal', password: 'first-password-1' })).toBeNull();
+  expect(await unlock({ page, username: 'admin@unframe.ai', password: 'First-password-1' })).toBeNull();
+  // The locked page passes the same checks the PM's file does.
+  expect(localRefs(page)).toEqual([]);
+});
+
+test('users: at least one, unique names, passwords of 12+ characters', () => {
+  expect(checkUsers([{ username: ' Admin@Unframe.ai ', password: 'twelve-chars' }])).toEqual([{ username: 'admin@unframe.ai', password: 'twelve-chars' }]);
+  expect(() => checkUsers([])).toThrow(/at least one user/);
+  expect(() => checkUsers(undefined)).toThrow(/at least one user/);
+  expect(() => checkUsers([{ username: '', password: 'twelve-chars' }])).toThrow(/username/);
+  expect(() => checkUsers([{ username: 'pm', password: 'short' }])).toThrow(/at least 12 characters/);
+  expect(() => checkUsers([{ username: 'pm', password: 'twelve-chars' }, { username: 'PM', password: 'other-twelve' }])).toThrow(/twice/);
+});
+
+test('saved users are read per customer and solution', () => {
+  expect(savedUsers('agco', 'rfq').map((u) => u.username)).toEqual(['pm']);
+  expect(savedUsers('agco', 'portal')).toEqual([]);
+});
+
+test('verify needs a saved user to open the link', async () => {
+  const page = file('nouser.html', '<!doctype html><html><body>hi</body></html>');
+  await expect(verify({ customer: 'agco', solution: 'portal', file: page, log: () => {} })).rejects.toThrow(/no saved user/);
 });
 
 test('file checks', () => {
