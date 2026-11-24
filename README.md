@@ -33,7 +33,7 @@ In Claude Code:
 /pm-publish <customer> <solution>
 ```
 
-Then give it the HTML file. Claude follows [SKILL.md](SKILL.md): it asks you to create the users who can open the link, publishes, waits for the build and signs in to the link to check it. For each user you pick **Generate a random user** (a random `@unframe.ai` username and a strong password, shown once so you can save them) or **Choose my own**. From the second user on there's also **Finish and publish**.
+Then give it the HTML file. Claude follows [SKILL.md](SKILL.md): it asks you to create the users who can open the link, publishes, waits for the build and signs in to the link to check it. For each user you pick **Use the default user** (`prototype@unframe.ai`, shared by every link that uses it), **Generate a random user** (a random `@unframe.ai` username and a strong password, shown once so you can save them) or **Choose my own**. From the second user on there's also **Finish and publish**.
 
 The script also runs on its own. New users go on stdin as JSON, so passwords stay off the command line:
 
